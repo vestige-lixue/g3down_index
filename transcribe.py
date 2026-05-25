@@ -1,16 +1,3 @@
-#!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "faster-whisper>=1.0",
-#   # Windows needs external CUDA 12 + cuDNN 9 DLLs (ctranslate2 4.x doesn't bundle them).
-#   # cublas64_12.dll itself depends on cudart64_12.dll, hence cuda-runtime.
-#   # This block is documentation; install via `uv add` into your project venv.
-#   "nvidia-cublas-cu12; sys_platform == 'win32'",
-#   "nvidia-cudnn-cu12==9.*; sys_platform == 'win32'",
-#   "nvidia-cuda-runtime-cu12; sys_platform == 'win32'",
-# ]
-# ///
 """
 Recursive Whisper transcription with resume support.
 

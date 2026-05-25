@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = []
-# ///
 """
 Search Whisper transcripts in the SQLite FTS5 index and jump to the moment in mpv.
 
