@@ -118,7 +118,7 @@ def runSearch(
 
     # One LIKE clause per term; trigram-indexed for 3+ char terms, scanned for shorter.
     likeClauses = ["segments_fts.text LIKE ? ESCAPE '\\'" for _ in queryTerms]
-    likeParams: list = [f"%{escapeLikePattern(term)}%" for term in queryTerms]
+    likeParams = [f"%{escapeLikePattern(term)}%" for term in queryTerms]
 
     if useFilter:
         # NULL-safe comparisons: if a stat is missing we keep the segment (innocent until

@@ -17,6 +17,7 @@ import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 # ffmpeg dynaudnorm filter parameters; tuned for vlog with variable speaking volume.
 # f=200ms frame, g=15 smoothing, p=0.95 peak, m=15 max gain factor, s=12 compression.
@@ -90,16 +91,17 @@ def probeVideo(videoPath: Path, ffprobePath: str) -> VideoProbe | None:
     if completed.returncode != 0:
         return None
     try:
-        data = json.loads(completed.stdout)
+        data = cast(dict[str, Any], json.loads(completed.stdout))
     except json.JSONDecodeError:
         return None
 
-    streams = data.get("streams", []) or []
+    streams = cast(list[dict[str, Any]], data.get("streams", []) or [])
     hasAudio = any(stream.get("codec_type") == "audio" for stream in streams)
 
     durationSeconds: float | None
     try:
-        durationSeconds = float(data.get("format", {}).get("duration", ""))
+        formatData = cast(dict[str, Any], data.get("format", {}))
+        durationSeconds = float(formatData.get("duration", ""))
     except (TypeError, ValueError):
         durationSeconds = None
 

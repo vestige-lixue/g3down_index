@@ -33,12 +33,15 @@ Output JSON schema (camelCase, version 1):
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import sys
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol, TypedDict, cast
 
 # --- Tunables (CLI flags override) -------------------------------------------------------
 
@@ -69,6 +72,83 @@ JSON_SCHEMA_VERSION: int = 1
 
 # Print progress every N seconds of audio processed (keeps long files visible).
 PROGRESS_INTERVAL_SECONDS: float = 60.0
+
+
+class TranscriptionWord(Protocol):
+    start: float
+    end: float
+    word: str
+    probability: float
+
+
+class TranscriptionSegment(Protocol):
+    id: int
+    start: float
+    end: float
+    text: str
+    avg_logprob: float
+    no_speech_prob: float
+    compression_ratio: float
+    words: list[TranscriptionWord] | None
+
+
+class TranscriptionInfo(Protocol):
+    language: str
+    language_probability: float
+    duration: float
+
+
+class TranscriptionModel(Protocol):
+    def transcribe(
+        self,
+        audio: str,
+        *,
+        language: str | None,
+        word_timestamps: bool,
+        vad_filter: bool,
+        vad_parameters: dict[str, int | float],
+        condition_on_previous_text: bool,
+        beam_size: int,
+    ) -> tuple[Iterable[TranscriptionSegment], TranscriptionInfo]: ...
+
+
+class TranscriptionModelConstructor(Protocol):
+    def __call__(
+        self,
+        modelName: str,
+        *,
+        device: str,
+        compute_type: str,
+    ) -> TranscriptionModel: ...
+
+
+class TranscriptionWordJson(TypedDict):
+    start: float
+    end: float
+    word: str
+    probability: float
+
+
+class TranscriptionSegmentJson(TypedDict):
+    id: int
+    start: float
+    end: float
+    text: str
+    avgLogprob: float
+    noSpeechProb: float
+    compressionRatio: float
+    words: list[TranscriptionWordJson]
+
+
+class TranscriptionResult(TypedDict):
+    version: int
+    model: str
+    language: str
+    languageProbability: float
+    audioDurationSeconds: float
+    transcriptionSeconds: float
+    audioRelativePath: str
+    segments: list[TranscriptionSegmentJson]
 
 
 @dataclass(frozen=True)
@@ -141,7 +221,7 @@ def setupCudaDllPathsWindows() -> None:
             print(f"  [skip] {moduleName} not installed")
             continue
 
-        searchPaths = getattr(module, "__path__", None) or []
+        searchPaths = cast(Iterable[str], getattr(module, "__path__", None) or [])
         dllsFound: list[Path] = []
         for basePath in searchPaths:
             dllsFound.extend(Path(basePath).rglob("*.dll"))
@@ -196,16 +276,20 @@ def setupCudaDllPathsWindows() -> None:
     print(f"  preloaded {preloadedCount} CUDA DLL(s) into process.")
 
 
-def loadModel(modelName: str, device: str, computeType: str):
+def loadModel(modelName: str, device: str, computeType: str) -> TranscriptionModel:
     """Lazy import so --help doesn't trigger CUDA init. Returns the WhisperModel instance."""
     # Must happen BEFORE importing faster_whisper / ctranslate2 on Windows so the loader
     # finds cublas64_12.dll and the cudnn DLLs at import time.
     setupCudaDllPathsWindows()
-    from faster_whisper import WhisperModel  # heavy import, kept local
+    fasterWhisper = importlib.import_module("faster_whisper")  # heavy import, kept local
+    modelConstructor = cast(
+        TranscriptionModelConstructor,
+        getattr(fasterWhisper, "WhisperModel"),
+    )
 
     print(f"loading model: {modelName} on {device} ({computeType}) ...")
     startSeconds = time.monotonic()
-    model = WhisperModel(modelName, device=device, compute_type=computeType)
+    model = modelConstructor(modelName, device=device, compute_type=computeType)
     print(f"  loaded in {time.monotonic() - startSeconds:.1f}s.")
     return model
 
@@ -221,7 +305,7 @@ def formatHms(seconds: float) -> str:
 
 
 def transcribeOne(
-    model,
+    model: TranscriptionModel,
     task: TranscriptionTask,
     modelName: str,
     language: str | None,
@@ -229,7 +313,7 @@ def transcribeOne(
     vadThreshold: float,
     audioRoot: Path,
     showSegments: bool,
-) -> dict | None:
+) -> TranscriptionResult | None:
     """Transcribe one file. Returns the JSON-ready dict, or None on failure."""
     task.outputJson.parent.mkdir(parents=True, exist_ok=True)
     startSeconds = time.monotonic()
@@ -257,13 +341,13 @@ def transcribeOne(
     print(f"  audio: {formatHms(audioDurationSeconds)}  "
           f"detected language: {info.language} (p={info.language_probability:.2f})")
 
-    segmentDicts: list[dict] = []
+    segmentDicts: list[TranscriptionSegmentJson] = []
     totalWords = 0
     nextProgressAt = PROGRESS_INTERVAL_SECONDS
 
     try:
         for segment in segmentIterator:
-            words: list[dict] = []
+            words: list[TranscriptionWordJson] = []
             # word_timestamps=True populates segment.words; defensive None check anyway.
             if segment.words is not None:
                 for word in segment.words:
@@ -310,7 +394,7 @@ def transcribeOne(
     speedRatio = (audioDurationSeconds / elapsedSeconds
                   if elapsedSeconds > 0 else 0.0)
 
-    result = {
+    result: TranscriptionResult = {
         "version": JSON_SCHEMA_VERSION,
         "model": modelName,
         "language": info.language,
@@ -326,7 +410,7 @@ def transcribeOne(
     return result
 
 
-def writeJsonAtomic(data: dict, outputPath: Path) -> None:
+def writeJsonAtomic(data: TranscriptionResult, outputPath: Path) -> None:
     """Write JSON to a .tmp sibling then rename, so resume never sees a partial file."""
     tempPath = outputPath.with_suffix(outputPath.suffix + ".tmp")
     # ensure_ascii=False keeps CJK characters readable in the file.

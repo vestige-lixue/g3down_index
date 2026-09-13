@@ -25,6 +25,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 # Bump this if the DB schema changes incompatibly; the script will refuse to open an
 # existing DB at a different version (use --rebuild to recreate).
@@ -185,7 +186,7 @@ def collectJsonFiles(jsonRoot: Path) -> list[Path]:
     return paths
 
 
-def loadTranscriptJson(jsonPath: Path) -> dict | None:
+def loadTranscriptJson(jsonPath: Path) -> dict[str, Any] | None:
     """Load a transcript JSON, validating schema version. Returns None on any failure."""
     try:
         with jsonPath.open("r", encoding="utf-8") as fileHandle:
@@ -208,7 +209,7 @@ def indexFile(
     connection: sqlite3.Connection,
     jsonPath: Path,
     relativePath: str,
-    data: dict,
+    data: dict[str, Any],
 ) -> tuple[str, int]:
     """Index one JSON file inside a single transaction. Returns (action, segmentCount)
     where action is one of 'new', 'reindex', or 'skip'."""
@@ -252,7 +253,18 @@ def indexFile(
     fileRowId = cursor.lastrowid
 
     # Build rows in a list first so executemany can batch the insert.
-    segmentRows: list[tuple] = []
+    segmentRows: list[
+        tuple[
+            int | None,
+            int | None,
+            float | None,
+            float | None,
+            str,
+            float | None,
+            float | None,
+            float | None,
+        ]
+    ] = []
     for segment in data["segments"]:
         text = (segment.get("text") or "").strip()
         if not text:
